@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# Models and Large weights (already in models/ but keep root clean)
+models/saved_model/
+*.tar.gz
+*.onnx
+*.tflite
+*.pb
+
+# Data and Logs
+src/face_db.pkl
+videos/
+output/
+.gemini/
+.agent/
+brain/
+*.log
+
+# VS Code / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

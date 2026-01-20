@@ -79,6 +79,7 @@ class FitZoneSystem:
         """
         print("\n" + "=" * 70)
         print("🏋️  FITZONE: Multiple Exercise Detection System")
+        print("⚡ Models: MoveNet MultiPose + InsightFace (ArcFace)")
         print("=" * 70 + "\n")
 
         # Check if files exist
@@ -142,7 +143,8 @@ class FitZoneSystem:
         print("⚡ DETECTING EXERCISES:")
         print("  • Bicep Curls")
         print("  • Lateral Raises")
-        print("  • Face recognition: Only when new person appears")
+        print("  • Face recognition: InsightFace (Background Thread)")
+        print("  • Pose estimation: MoveNet MultiPose (C++ Execution)")
         print("=" * 70 + "\n")
 
     @staticmethod
@@ -160,6 +162,7 @@ class FitZoneSystem:
                                body_results: List[Dict]) -> Dict[int, Dict]:
         """
         Match detected faces to tracked bodies.
+        Uses centroid distance for tie-breaking when multiple bodies qualify.
         """
         matches = {}
 
@@ -168,30 +171,37 @@ class FitZoneSystem:
             fx1, fy1, fx2, fy2 = face_bbox
             face_center = ((fx1 + fx2) / 2, (fy1 + fy2) / 2)
 
+            best_track_id = None
+            min_dist = float('inf')
+            best_face_info = None
+
             # Check which body bbox contains this face center
             for body in body_results:
                 body_bbox = body["bbox"]
 
                 if self._is_point_in_bbox(face_center, body_bbox):
-                    track_id = body["track_id"]
+                    # Calculate distance to body center for better tie-breaking
+                    bx1, by1, bx2, by2 = body_bbox
+                    body_center = ((bx1 + bx2) / 2, (by1 + by2) / 2)
+                    dist = ((face_center[0] - body_center[0])**2 + (face_center[1] - body_center[1])**2)**0.5
 
-                    # If multiple faces match same body, keep the one with higher similarity
-                    if track_id in matches:
-                        if face["similarity"] > matches[track_id]["similarity"]:
-                            matches[track_id] = {
-                                "name": face["name"],
-                                "similarity": face["similarity"],
-                                "face_bbox": face_bbox,
-                                "confidence": face.get("confidence", 0)
-                            }
-                    else:
-                        matches[track_id] = {
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_track_id = body["track_id"]
+                        best_face_info = {
                             "name": face["name"],
                             "similarity": face["similarity"],
                             "face_bbox": face_bbox,
                             "confidence": face.get("confidence", 0)
                         }
-                    break
+
+            if best_track_id is not None:
+                # If multiple faces match same body, keep the one with higher similarity
+                if best_track_id in matches:
+                    if best_face_info["similarity"] > matches[best_track_id]["similarity"]:
+                        matches[best_track_id] = best_face_info
+                else:
+                    matches[best_track_id] = best_face_info
 
         return matches
 
@@ -591,7 +601,12 @@ class FitZoneSystem:
                 avg_process = np.mean(self.processing_times) * 1000
                 print(f"Average frame processing: {avg_process:.1f}ms")
 
-            print(f"Persons identified: {len(self.identified_tracks)}")
+            # Calculate unique names identified
+            unique_names = set(info["name"] for info in self.identified_tracks.values() if info.get("name"))
+            print(f"Unique persons identified: {len(unique_names)}")
+            if unique_names:
+                print(f"   Named identities: {', '.join(unique_names)}")
+            print(f"Total track IDs created: {len(self.identified_tracks)}")
             print("=" * 70 + "\n")
 
             self.streamer.stop()

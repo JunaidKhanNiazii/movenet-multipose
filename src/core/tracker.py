@@ -130,7 +130,17 @@ class PersonTracker:
             "last_lateral_angle": detection.get("lateral_angle", 0),
             "exercise_pattern_history": deque(maxlen=20),
             "detection_history": deque(maxlen=20),
-            "debug_log": deque(maxlen=50)
+            "debug_log": deque(maxlen=50),
+            
+            # Shadow tracking for two-rep locking
+            "bicep_reps": 0,
+            "bicep_state": "down",
+            "bicep_debounce_up": 0,
+            "bicep_debounce_down": 0,
+            "lateral_reps": 0,
+            "lateral_state": "down",
+            "lateral_debounce_up": 0,
+            "lateral_debounce_down": 0
         }
 
         # Initialize history

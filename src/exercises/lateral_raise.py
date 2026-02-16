@@ -13,9 +13,9 @@ class LateralRaiseDetector:
     """Detects and counts lateral raise repetitions."""
     
     # ===== CONFIGURATION =====
-    ANGLE_DOWN_THRESHOLD = 25    # Arms down (more lenient)
+    ANGLE_DOWN_THRESHOLD = 25    # Arms down
     ANGLE_UP_THRESHOLD = 60      # Arms raised
-    ELBOW_ANGLE_MIN = 130        # Elbow should be relatively straight
+    ELBOW_ANGLE_MIN = 150        # Elbow MUST be straight (Stricter)
     HEIGHT_THRESHOLD = -0.10     # Wrist should be higher than shoulder
     
     MIN_KEYPOINT_SCORE = 0.3
@@ -65,8 +65,8 @@ class LateralRaiseDetector:
             arm_straight_enough = left_elbow_angle > self.ELBOW_ANGLE_MIN
             arm_raised = left_elevation > self.ANGLE_DOWN_THRESHOLD
 
-            # Accept if arm is raised, even if elbow isn't perfectly straight
-            left_valid = arm_raised and (arm_straight_enough or left_elevation > 40)
+            # Stricter validation: Arm MUST be straight enough
+            left_valid = arm_raised and arm_straight_enough
 
             debug_info["left_valid"] = left_valid
             if left_valid:
@@ -93,7 +93,7 @@ class LateralRaiseDetector:
             arm_straight_enough = right_elbow_angle > self.ELBOW_ANGLE_MIN
             arm_raised = right_elevation > self.ANGLE_DOWN_THRESHOLD
 
-            right_valid = arm_raised and (arm_straight_enough or right_elevation > 40)
+            right_valid = arm_raised and arm_straight_enough
 
             debug_info["right_valid"] = right_valid
             if right_valid:
@@ -106,7 +106,8 @@ class LateralRaiseDetector:
 
         return 0, False, debug_info
     
-    def update_track(self, track: Dict, angle: float, track_id: int) -> bool:
+    def update_track(self, track: Dict, angle: float, track_id: int,
+                     prefix: str = "", update_history: bool = True) -> bool:
         """
         Update track state for lateral raise and count reps.
         
@@ -114,35 +115,47 @@ class LateralRaiseDetector:
             track: Track dictionary with state
             angle: Current lateral angle
             track_id: ID for logging
+            prefix: Prefix for state keys (e.g., "lateral_") for shadow counting
+            update_history: Whether to update angle history
             
         Returns:
             True if a rep was completed
         """
-        track["lateral_angle_history"].append(angle)
-        smoothed_angle = float(np.mean(track["lateral_angle_history"]))
-        track["last_lateral_angle"] = smoothed_angle
+        # Select keys
+        state_key = f"{prefix}current_state" if not prefix else f"{prefix}state"
+        reps_key = f"{prefix}reps"
+        up_key = f"{prefix}debounce_up"
+        down_key = f"{prefix}debounce_down"
+        
+        if update_history:
+            track["lateral_angle_history"].append(angle)
+            smoothed_angle = float(np.mean(track["lateral_angle_history"]))
+            track["last_lateral_angle"] = smoothed_angle
+        else:
+            smoothed_angle = angle
 
         rep_completed = False
 
         if smoothed_angle < self.ANGLE_DOWN_THRESHOLD:
-            track["debounce_down"] += 1
-            track["debounce_up"] = 0
+            track[down_key] += 1
+            track[up_key] = 0
         elif smoothed_angle > self.ANGLE_UP_THRESHOLD:
-            track["debounce_up"] += 1
-            track["debounce_down"] = 0
+            track[up_key] += 1
+            track[down_key] = 0
         else:
-            track["debounce_up"] = max(0, track["debounce_up"] - 1)
-            track["debounce_down"] = max(0, track["debounce_down"] - 1)
+            track[up_key] = max(0, track[up_key] - 1)
+            track[down_key] = max(0, track[down_key] - 1)
 
-        if track["current_state"] == "down" and track["debounce_up"] >= self.DEBOUNCE_FRAMES:
-            track["current_state"] = "up"
+        if track[state_key] == "down" and track[up_key] >= self.DEBOUNCE_FRAMES:
+            track[state_key] = "up"
 
-        elif track["current_state"] == "up" and track["debounce_down"] >= self.DEBOUNCE_FRAMES:
-            track["reps"] += 1
-            print(f"🏋️ Track {track_id}: Lateral Raise Rep #{track['reps']}")
-            track["current_state"] = "down"
-            track["debounce_up"] = 0
-            track["debounce_down"] = 0
+        elif track[state_key] == "up" and track[down_key] >= self.DEBOUNCE_FRAMES:
+            track[reps_key] += 1
+            if not prefix: # Only print for confirmed exercise
+                print(f"🏋️ Track {track_id}: Lateral Raise Rep #{track[reps_key]}")
+            track[state_key] = "down"
+            track[up_key] = 0
+            track[down_key] = 0
             rep_completed = True
             
         return rep_completed

@@ -55,15 +55,21 @@ class AngleCalculator:
         Returns:
             Elevation angle in degrees
         """
-        shoulder_y, shoulder_x = shoulder
-        wrist_y, wrist_x = wrist
+        # MoveNet MultiPose returns keypoints as [y, x, score].
+        # In this project, they are often swapped or handled as (x, y).
+        # Standardizing unpacking here based on system usage:
+        shoulder_x, shoulder_y = shoulder
+        wrist_x, wrist_y = wrist
 
-        # Calculate vertical and horizontal distances
-        dy = shoulder_y - wrist_y  # Positive if wrist is higher
-        dx = abs(wrist_x - shoulder_x)  # Horizontal distance
+        # Calculate horizontal and vertical displacement
+        # (y increases downwards in images)
+        dy = wrist_y - shoulder_y  # Positive if wrist is below shoulder
+        dx = wrist_x - shoulder_x 
 
-        # Calculate angle from vertical axis
-        angle = degrees(atan2(dx, max(abs(dy), 0.01)))
+        # Calculate angle from vertical (0 degrees = straight down)
+        # Using atan2(horizontal distance, vertical distance)
+        # We use abs(dx) as we only care about elevation from the vertical axis.
+        angle = degrees(atan2(abs(dx), max(dy, 0.001)))
 
         return angle
 

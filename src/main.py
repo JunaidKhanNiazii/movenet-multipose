@@ -32,10 +32,10 @@ MOVENET_MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'mo
 FACE_DATABASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), 'face_db.pkl'))
 
 # Video source - Default to videos folder (one level up)
-VIDEO_SOURCE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'videos', 'J Biceps S shoulder.mp4'))
+VIDEO_SOURCE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'videos', 'J Bicep S Shoulder22.mp4'))
 
 # Optional: Set to a path to save output video (saved to output folder)
-OUTPUT_VIDEO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'output', 'output_result.mp4'))
+OUTPUT_VIDEO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'output', 'outputJZ1.mp4'))
 
 # Display window (set to False for headless mode)
 SHOW_DISPLAY = True
@@ -382,74 +382,40 @@ class FitZoneSystem:
             # Draw pose skeleton
             self._draw_skeleton(output, body["keypoints"], body["keypoint_scores"])
 
-            # Prepare text labels
+            # Prepare labels
+            labels = []
             if person_name:
-                # Identified person
-                label_name = f"{person_name}"
-                label_exercise = f"Exercise: {exercise_type}"
-                label_reps = f"Reps: {reps}"
-
-                # Add angle information based on exercise
-                if exercise_type == "Bicep Curl":
-                    label_angle = f"Elbow Angle: {int(bicep_angle)}°"
-                elif exercise_type == "Lateral Raise":
-                    label_angle = f"Arm Angle: {int(lateral_angle)}°"
-                else:
-                    label_angle = ""
-
-                # Draw name
-                cv2.putText(output, label_name, (x1, y1 - 80),
-                            self.FONT, self.FONT_SCALE_LARGE, (0, 255, 0),
-                            self.FONT_THICKNESS + 1)
-
-                # Draw exercise info with color
-                cv2.putText(output, label_exercise, (x1, y1 - 55),
-                            self.FONT, self.FONT_SCALE_MEDIUM, exercise_color,
-                            self.FONT_THICKNESS)
-
-                # Draw reps
-                cv2.putText(output, label_reps, (x1, y1 - 30),
-                            self.FONT, self.FONT_SCALE_MEDIUM, self.COLOR_TEXT,
-                            self.FONT_THICKNESS)
-
-                # Draw angle if available
-                if label_angle:
-                    cv2.putText(output, label_angle, (x1, y1 - 5),
-                                self.FONT, self.FONT_SCALE_SMALL, (200, 200, 200),
-                                self.FONT_THICKNESS - 1)
-
+                labels.append((f"{person_name}", (0, 255, 0), self.FONT_SCALE_LARGE))
             else:
-                # Unidentified person
-                label_id = f"Person #{track_id}"
-                label_exercise = f"Exercise: {exercise_type}"
-                label_reps = f"Reps: {reps}"
-                label_unknown = "Unknown"
+                labels.append((f"Person #{track_id}", self.COLOR_BBOX_UNIDENTIFIED, self.FONT_SCALE_LARGE))
+            
+            labels.append((f"Exercise: {exercise_type}", exercise_color, self.FONT_SCALE_MEDIUM))
+            labels.append((f"Reps: {reps}", self.COLOR_TEXT, self.FONT_SCALE_MEDIUM))
+            
+            if exercise_type == "Bicep Curl":
+                labels.append((f"Elbow Angle: {int(bicep_angle)}°", (200, 200, 200), self.FONT_SCALE_SMALL))
+            elif exercise_type == "Lateral Raise":
+                labels.append((f"Arm Angle: {int(lateral_angle)}°", (200, 200, 200), self.FONT_SCALE_SMALL))
 
-                # Add angle information based on exercise
-                if exercise_type == "Bicep Curl":
-                    label_angle = f"Elbow Angle: {int(bicep_angle)}°"
-                elif exercise_type == "Lateral Raise":
-                    label_angle = f"Arm Angle: {int(lateral_angle)}°"
-                else:
-                    label_angle = ""
+            # Draw labels with background
+            # Calculate where to put the labels (above or inside)
+            line_height = 25
+            total_height = len(labels) * line_height + 10
+            
+            start_y = y1 - total_height
+            if start_y < 10:  # If too high, draw inside the box
+                start_y = y1 + 10
+            
+            # Draw semi-transparent background for labels
+            max_label_w = 200 # Approx
+            cv2.rectangle(output, (x1, start_y - 10), (x1 + max_label_w, start_y + total_height - 10), (0, 0, 0), -1)
+            cv2.rectangle(output, (x1, start_y - 10), (x1 + max_label_w, start_y + total_height - 10), bbox_color, 1)
 
-                cv2.putText(output, label_id, (x1, y1 - 80),
-                            self.FONT, self.FONT_SCALE_LARGE, self.COLOR_BBOX_UNIDENTIFIED,
-                            self.FONT_THICKNESS)
-
-                cv2.putText(output, label_exercise, (x1, y1 - 55),
-                            self.FONT, self.FONT_SCALE_MEDIUM, exercise_color,
-                            self.FONT_THICKNESS)
-
-                cv2.putText(output, label_reps, (x1, y1 - 30),
-                            self.FONT, self.FONT_SCALE_MEDIUM, self.COLOR_TEXT,
-                            self.FONT_THICKNESS)
-
-                # Draw angle if available
-                if label_angle:
-                    cv2.putText(output, label_angle, (x1, y1 - 5),
-                                self.FONT, self.FONT_SCALE_SMALL, (200, 200, 200),
-                                self.FONT_THICKNESS - 1)
+            curr_y = start_y + 15
+            for text, color, scale in labels:
+                cv2.putText(output, text, (x1 + 10, curr_y),
+                            self.FONT, scale, color, self.FONT_THICKNESS)
+                curr_y += line_height
 
         # Draw FPS counter
         cv2.rectangle(output, (10, 10), (250, 100), (0, 0, 0), -1)

@@ -15,7 +15,7 @@ class BicepCurlDetector:
     # ===== CONFIGURATION =====
     ANGLE_DOWN_THRESHOLD = 160  # Arm extended
     ANGLE_UP_THRESHOLD = 50     # Arm curled
-    ANGLE_RANGE = (40, 170)     # Valid range for bicep curls
+    ANGLE_RANGE = (5.0, 180.0)  # Broadened range for tight curls and full extension
     
     MIN_KEYPOINT_SCORE = 0.3
     DEBOUNCE_FRAMES = 2
@@ -78,7 +78,8 @@ class BicepCurlDetector:
 
         return avg_angle, is_valid, debug_info
     
-    def update_track(self, track: Dict, angle: float, track_id: int) -> bool:
+    def update_track(self, track: Dict, angle: float, track_id: int, 
+                     prefix: str = "", update_history: bool = True) -> bool:
         """
         Update track state for bicep curl and count reps.
         
@@ -86,35 +87,47 @@ class BicepCurlDetector:
             track: Track dictionary with state
             angle: Current bicep angle
             track_id: ID for logging
+            prefix: Prefix for state keys (e.g., "bicep_") for shadow counting
+            update_history: Whether to update angle history
             
         Returns:
             True if a rep was completed
         """
-        track["bicep_angle_history"].append(angle)
-        smoothed_angle = float(np.mean(track["bicep_angle_history"]))
-        track["last_bicep_angle"] = smoothed_angle
+        # Select keys
+        state_key = f"{prefix}current_state" if not prefix else f"{prefix}state"
+        reps_key = f"{prefix}reps"
+        up_key = f"{prefix}debounce_up"
+        down_key = f"{prefix}debounce_down"
+        
+        if update_history:
+            track["bicep_angle_history"].append(angle)
+            smoothed_angle = float(np.mean(track["bicep_angle_history"]))
+            track["last_bicep_angle"] = smoothed_angle
+        else:
+            smoothed_angle = angle
 
         rep_completed = False
 
         if smoothed_angle > self.ANGLE_DOWN_THRESHOLD:
-            track["debounce_down"] += 1
-            track["debounce_up"] = 0
+            track[down_key] += 1
+            track[up_key] = 0
         elif smoothed_angle < self.ANGLE_UP_THRESHOLD:
-            track["debounce_up"] += 1
-            track["debounce_down"] = 0
+            track[up_key] += 1
+            track[down_key] = 0
         else:
-            track["debounce_up"] = max(0, track["debounce_up"] - 1)
-            track["debounce_down"] = max(0, track["debounce_down"] - 1)
+            track[up_key] = max(0, track[up_key] - 1)
+            track[down_key] = max(0, track[down_key] - 1)
 
-        if track["current_state"] == "down" and track["debounce_up"] >= self.DEBOUNCE_FRAMES:
-            track["current_state"] = "up"
+        if track[state_key] == "down" and track[up_key] >= self.DEBOUNCE_FRAMES:
+            track[state_key] = "up"
 
-        elif track["current_state"] == "up" and track["debounce_down"] >= self.DEBOUNCE_FRAMES:
-            track["reps"] += 1
-            print(f"💪 Track {track_id}: Bicep Curl Rep #{track['reps']}")
-            track["current_state"] = "down"
-            track["debounce_up"] = 0
-            track["debounce_down"] = 0
+        elif track[state_key] == "up" and track[down_key] >= self.DEBOUNCE_FRAMES:
+            track[reps_key] += 1
+            if not prefix: # Only print for confirmed exercise
+                print(f"💪 Track {track_id}: Bicep Curl Rep #{track[reps_key]}")
+            track[state_key] = "down"
+            track[up_key] = 0
+            track[down_key] = 0
             rep_completed = True
             
         return rep_completed

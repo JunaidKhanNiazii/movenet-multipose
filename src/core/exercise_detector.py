@@ -89,6 +89,16 @@ class ExerciseDetector:
         bicep_valid = detection["bicep_valid"]
         lateral_valid = detection["lateral_valid"]
 
+        # LATERAL RAISE EXCLUSION: If elbow is bent (< 150), it's NOT a lateral raise
+        is_elbow_bent = (
+            (bicep_debug["left_valid"] and bicep_debug["left_angle"] < 150) or
+            (bicep_debug["right_valid"] and bicep_debug["right_angle"] < 150)
+        )
+
+        if is_elbow_bent and lateral_valid:
+            lateral_valid = False
+            detection["lateral_valid"] = False
+
         if bicep_valid and not lateral_valid:
             return ExerciseType.BICEP_CURL
 
@@ -96,35 +106,31 @@ class ExerciseDetector:
             return ExerciseType.LATERAL_RAISE
 
         if bicep_valid and lateral_valid:
-            arms_raised_high = (
-                lateral_debug["left_elevation"] > 50 or
-                lateral_debug["right_elevation"] > 50
-            )
-
-            elbows_bent = (
-                (bicep_debug["left_valid"] and bicep_debug["left_angle"] < 120) or
-                (bicep_debug["right_valid"] and bicep_debug["right_angle"] < 120)
-            )
-
-            if arms_raised_high and not elbows_bent:
-                return ExerciseType.LATERAL_RAISE
-            elif elbows_bent:
+            # If both seem valid, prioritize Bicep Curl if elbow is bent at all
+            if is_elbow_bent:
                 return ExerciseType.BICEP_CURL
-            else:
-                return ExerciseType.LATERAL_RAISE if detection["lateral_angle"] > detection["bicep_angle"] else ExerciseType.BICEP_CURL
+            
+            # Use elevation as tie-breaker for straight-arm movements
+            if detection["lateral_angle"] > 40:
+                return ExerciseType.LATERAL_RAISE
+            
+            return ExerciseType.BICEP_CURL
 
         return ExerciseType.UNKNOWN
     
     def _determine_best_exercise_for_track(self, track_id: int, detection: Dict,
                                           bicep_debug: Dict, lateral_debug: Dict) -> ExerciseType:
-        """Determine the best exercise type using history."""
+        """Determine the best exercise type using history (pre-confirmation)."""
         track = self.tracker.tracks[track_id]
+
+        if track["confirmed_exercise"] != ExerciseType.UNKNOWN:
+            return track["confirmed_exercise"]
 
         current_exercise = self._determine_exercise_for_detection(detection, bicep_debug, lateral_debug)
         track["exercise_pattern_history"].append(current_exercise)
 
         if len(track["exercise_pattern_history"]) < 5:
-            return current_exercise
+            return ExerciseType.UNKNOWN
 
         exercise_counts = {
             ExerciseType.BICEP_CURL: 0,
@@ -139,14 +145,11 @@ class ExerciseDetector:
         bicep_ratio = exercise_counts[ExerciseType.BICEP_CURL] / total_frames
         lateral_ratio = exercise_counts[ExerciseType.LATERAL_RAISE] / total_frames
 
-        if bicep_ratio > lateral_ratio and bicep_ratio > 0.4:
+        if bicep_ratio > 0.7: 
             return ExerciseType.BICEP_CURL
-        elif lateral_ratio > bicep_ratio and lateral_ratio > 0.4:
+        elif lateral_ratio > 0.8: 
             return ExerciseType.LATERAL_RAISE
         else:
-            for ex in reversed(track["exercise_pattern_history"]):
-                if ex != ExerciseType.UNKNOWN:
-                    return ex
             return ExerciseType.UNKNOWN
     
     def _update_exercise_confirmation(self, track_id: int, new_exercise: ExerciseType):
@@ -173,27 +176,45 @@ class ExerciseDetector:
         """Update track exercise state and count reps."""
         track = self.tracker.tracks[track_id]
 
+        # 1. PRINT DEBUG (Optional, throttled)
         self._print_detection_debug(track_id, detection, bicep_debug, lateral_debug)
 
-        best_exercise = self._determine_best_exercise_for_track(track_id, detection, bicep_debug, lateral_debug)
-        self._update_exercise_confirmation(track_id, best_exercise)
+        # 2. IF NOT CONFIRMED, RUN SHADOW TRACKING
+        if track["confirmed_exercise"] == ExerciseType.UNKNOWN:
+            # Update background counts for both
+            self.bicep_detector.update_track(track, angle=detection["bicep_angle"], 
+                                             track_id=track_id, prefix="bicep_", update_history=True)
+            self.lateral_detector.update_track(track, angle=detection["lateral_angle"], 
+                                               track_id=track_id, prefix="lateral_", update_history=True)
 
-        track["current_exercise"] = best_exercise
-
-        if track["confirmed_exercise"] != ExerciseType.UNKNOWN:
-            exercise_to_use = track["confirmed_exercise"]
+            # Check if either reached 2 reps
+            if track["bicep_reps"] >= 2:
+                track["confirmed_exercise"] = ExerciseType.BICEP_CURL
+                track["reps"] = track["bicep_reps"]
+                track["current_state"] = track["bicep_state"]
+                track["debounce_up"] = track["bicep_debounce_up"]
+                track["debounce_down"] = track["bicep_debounce_down"]
+                print(f"\n✅ TRACK {track_id} LOCKED: Bicep Curl (after 2 reps)")
+                
+            elif track["lateral_reps"] >= 2:
+                track["confirmed_exercise"] = ExerciseType.LATERAL_RAISE
+                track["reps"] = track["lateral_reps"]
+                track["current_state"] = track["lateral_state"]
+                track["debounce_up"] = track["lateral_debounce_up"]
+                track["debounce_down"] = track["lateral_debounce_down"]
+                print(f"\n✅ TRACK {track_id} LOCKED: Lateral Raise (after 2 reps)")
+            
+            # While not confirmed, we can still use heuristic for "likely" display
+            best_exercise = self._determine_best_exercise_for_track(track_id, detection, bicep_debug, lateral_debug)
+            track["current_exercise"] = best_exercise
+            
         else:
-            exercise_to_use = best_exercise
-
-        track["current_exercise"] = exercise_to_use
-
-        if exercise_to_use == ExerciseType.BICEP_CURL:
-            self.bicep_detector.update_track(track, detection["bicep_angle"], track_id)
-        elif exercise_to_use == ExerciseType.LATERAL_RAISE:
-            self.lateral_detector.update_track(track, detection["lateral_angle"], track_id)
-        else:
-            track["debounce_up"] = 0
-            track["debounce_down"] = 0
+            # 3. IF CONFIRMED, UPDATE MAIN DETECTOR
+            track["current_exercise"] = track["confirmed_exercise"]
+            if track["confirmed_exercise"] == ExerciseType.BICEP_CURL:
+                self.bicep_detector.update_track(track, detection["bicep_angle"], track_id)
+            elif track["confirmed_exercise"] == ExerciseType.LATERAL_RAISE:
+                self.lateral_detector.update_track(track, detection["lateral_angle"], track_id)
     
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """
@@ -290,17 +311,20 @@ class ExerciseDetector:
                 else:
                     keypoints_pixel.append(None)
 
+            # Only return official exercise and reps if CONFIRMED (2 reps completed)
+            is_confirmed = (track["confirmed_exercise"] != ExerciseType.UNKNOWN)
+            
             results.append({
                 "track_id": track_id,
                 "bbox": (x1, y1, x2, y2),
-                "reps": track["reps"],
-                "exercise_type": track["current_exercise"].value,
+                "reps": track["reps"] if is_confirmed else 0,
+                "exercise_type": track["confirmed_exercise"].value if is_confirmed else "Detecting...",
                 "bicep_angle": track["last_bicep_angle"],
                 "lateral_angle": track["last_lateral_angle"],
                 "keypoints": keypoints_pixel,
                 "keypoint_scores": detection["kp_scores"],
                 "confidence": track["exercise_confidence"],
-                "confirmed": track["confirmed_exercise"].value
+                "confirmed": is_confirmed
             })
 
         return results
